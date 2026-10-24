@@ -1,12 +1,26 @@
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
+
+while not LocalPlayer do
+    task.wait()
+    LocalPlayer = Players.LocalPlayer
+end
+
+local ConfigFileName = "PROTO_MM2_Config.json"
+local ScriptFileName = "PROTO_Autorun.lua"
 
 local Settings = {
     AutoFarmCoins = false,
     AutoFarmCandy = false,
     ESP = false,
+    AutoExecute = true,
     TweenSpeed = 24
 }
 
@@ -14,16 +28,69 @@ local CurrentTween = nil
 local VisitedCoins = {}
 
 -- ==========================================
--- 1. PROTO Halloween UI
+-- 1. Config System (Save & Load)
 -- ==========================================
+local function SaveConfig()
+    if writefile then
+        pcall(function()
+            local json = HttpService:JSONEncode(Settings)
+            writefile(ConfigFileName, json)
+        end)
+    end
+end
+
+local function LoadConfig()
+    if isfile and readfile and isfile(ConfigFileName) then
+        pcall(function()
+            local decoded = HttpService:JSONDecode(readfile(ConfigFileName))
+            if type(decoded) == "table" then
+                for k, v in pairs(decoded) do
+                    if Settings[k] ~= nil then
+                        Settings[k] = v
+                    end
+                end
+            end
+        end)
+    end
+end
+
+LoadConfig()
+
+-- ==========================================
+-- 2. Auto Execute on Teleport System
+-- ==========================================
+local QueueTeleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+
+local TeleportQueued = false
+LocalPlayer.OnTeleport:Connect(function(State)
+    if Settings.AutoExecute and not TeleportQueued and QueueTeleport then
+        TeleportQueued = true
+        pcall(function()
+            if isfile and isfile(ScriptFileName) then
+                QueueTeleport('if readfile and isfile("' .. ScriptFileName .. '") then loadstring(readfile("' .. ScriptFileName .. '"))() end')
+            elseif _G.PROTO_ScriptSource then
+                QueueTeleport(_G.PROTO_ScriptSource)
+            end
+        end)
+    end
+end)
+
+-- ==========================================
+-- 3. PROTO Halloween UI
+-- ==========================================
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+if PlayerGui:FindFirstChild("PROTO_Halloween_UI") then
+    PlayerGui.PROTO_Halloween_UI:Destroy()
+end
+
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "PROTO_Halloween_UI"
 ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.Parent = PlayerGui
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 220, 0, 210)
+MainFrame.Size = UDim2.new(0, 220, 0, 260)
 MainFrame.Position = UDim2.new(0.5, -110, 0.3, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 12, 24)
 MainFrame.BorderSizePixel = 0
@@ -89,9 +156,6 @@ UIListLayout.Parent = ContentFrame
 local function CreateToggle(text, settingKey)
     local Btn = Instance.new("TextButton")
     Btn.Size = UDim2.new(1, 0, 0, 42)
-    Btn.BackgroundColor3 = Color3.fromRGB(30, 22, 38)
-    Btn.Text = text .. " : OFF"
-    Btn.TextColor3 = Color3.fromRGB(220, 220, 220)
     Btn.Font = Enum.Font.GothamSemibold
     Btn.TextSize = 13
     Btn.AutoButtonColor = false
@@ -102,12 +166,10 @@ local function CreateToggle(text, settingKey)
     BtnCorner.Parent = Btn
 
     local BtnStroke = Instance.new("UIStroke")
-    BtnStroke.Color = Color3.fromRGB(70, 50, 90)
     BtnStroke.Thickness = 1.2
     BtnStroke.Parent = Btn
 
-    Btn.MouseButton1Click:Connect(function()
-        Settings[settingKey] = not Settings[settingKey]
+    local function UpdateVisualState()
         if Settings[settingKey] then
             Btn.Text = text .. " : ON"
             Btn.BackgroundColor3 = Color3.fromRGB(255, 105, 0)
@@ -118,10 +180,19 @@ local function CreateToggle(text, settingKey)
             Btn.BackgroundColor3 = Color3.fromRGB(30, 22, 38)
             Btn.TextColor3 = Color3.fromRGB(220, 220, 220)
             BtnStroke.Color = Color3.fromRGB(70, 50, 90)
-            if CurrentTween then
-                CurrentTween:Cancel()
-                CurrentTween = nil
-            end
+        end
+    end
+
+    UpdateVisualState()
+
+    Btn.MouseButton1Click:Connect(function()
+        Settings[settingKey] = not Settings[settingKey]
+        UpdateVisualState()
+        SaveConfig()
+
+        if not Settings[settingKey] and (settingKey == "AutoFarmCoins" or settingKey == "AutoFarmCandy") and CurrentTween then
+            CurrentTween:Cancel()
+            CurrentTween = nil
         end
     end)
 end
@@ -129,6 +200,7 @@ end
 CreateToggle("🪙 Auto Farm Coins", "AutoFarmCoins")
 CreateToggle("🍬 Auto Farm Candy", "AutoFarmCandy")
 CreateToggle("👻 Role ESP", "ESP")
+CreateToggle("⚡ Auto Execute", "AutoExecute")
 
 local minimized = false
 MinimizeBtn.MouseButton1Click:Connect(function()
@@ -138,13 +210,13 @@ MinimizeBtn.MouseButton1Click:Connect(function()
         MainFrame:TweenSize(UDim2.new(0, 220, 0, 36), "Out", "Quad", 0.25, true)
         MinimizeBtn.Text = "+"
     else
-        MainFrame:TweenSize(UDim2.new(0, 220, 0, 210), "Out", "Quad", 0.25, true)
+        MainFrame:TweenSize(UDim2.new(0, 220, 0, 260), "Out", "Quad", 0.25, true)
         MinimizeBtn.Text = "-"
     end
 end)
 
 -- ==========================================
--- 2. Role ESP Logic
+-- 4. Role ESP Logic
 -- ==========================================
 local function GetPlayerRoleColor(player)
     local character = player.Character
@@ -188,7 +260,7 @@ local function UpdateESP()
 end
 
 -- ==========================================
--- 3. Fixed Auto Farm (Coins & Candy)
+-- 5. Auto Farm (Coins & Candy)
 -- ==========================================
 local function FindCoinContainer()
     for _, child in ipairs(workspace:GetChildren()) do
@@ -244,7 +316,6 @@ local function GetNearestCollectible(container)
     return nearestPart, nearestItem, shortestDist
 end
 
--- Noclip & Zero Velocity Stabilization
 RunService.Stepped:Connect(function()
     if (Settings.AutoFarmCoins or Settings.AutoFarmCandy) and LocalPlayer.Character then
         local rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -260,14 +331,12 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ESP Loop
 task.spawn(function()
     while task.wait(0.3) do
         UpdateESP()
     end
 end)
 
--- Auto Farm Loop
 task.spawn(function()
     while task.wait(0.1) do
         if Settings.AutoFarmCoins or Settings.AutoFarmCandy then
